@@ -61,22 +61,43 @@ def format_sse(data, event=None, id=None, retry=None):
     
     return message + "\n"
 
+
+def warmup_retriever():
+    try:
+        logger.info("预热检索器...")
+        store_name = "extra"
+        k = 5
+
+        # 提前加载检索器
+        retriever = load_vector_store(store_name, k)
+        return retriever
+    except Exception as e:
+        logger.error(f"检索器预热失败: {str(e)}")
+        return None
+
+# 应用启动时预热检索器
+global_retriever = warmup_retriever()
+
 # '/api/python/demo/' 需要和Nest HTTP触发器对应
-@app.route('/api/workstation/agent', methods=['GET'])
+@app.route('/api/workstation/agent', methods=['POST'])
 def echo():
-    ## 基本变量设置
-    chunk_size = 300
-    chunk_overlap = 50
-    k = 3
+    k = 5
     store_name = "extra"
     
     def generate():
         try:
             message_id = 1
-            
-            # 从URL参数获取查询和模型
-            query = request.args.get('query')
-            
+
+            # 获取POST请求的JSON数据
+            data = request.get_json(silent=True)
+            if not data:
+                error_msg = {"error": "请求体不能为空"}
+                yield format_sse(error_msg, event="error", id=message_id)
+                return
+
+            # 从请求体中获取查询和模型
+            query = data.get('query')
+
             if not query:
                 error_msg = {"error": "缺少query参数"}
                 yield format_sse(error_msg, event="error", id=message_id)
@@ -85,25 +106,9 @@ def echo():
             # 发送处理开始事件
             yield format_sse({"status": "开始处理请求"}, event="start", id=message_id)
             message_id += 1
-            
-            meta_path = f"{store_name}/metadata.pkl"
-
-            if not os.path.exists(meta_path):
-                from prepare_data import load_file, chunk_data
-                logger.info("加载文档...")
-                yield format_sse({"status": "正在加载文档..."}, event="loading", id=message_id)
-                message_id += 1
-                
-                loaded_data = load_file('extraKnowledge.txt')
-                chunks = chunk_data(loaded_data, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-                retriever = load_vector_store(store_name, k, chunks)
-            else:
-                # 发送检索开始事件
-                yield format_sse({"status": "开始检索相关文档..."}, event="retrieval", id=message_id)
-                message_id += 1
 
             # 检索相关文档
-            retriever = load_vector_store(store_name, k)
+            retriever = global_retriever if global_retriever else load_vector_store(store_name, k)
             context_docs = query_vector_store(retriever, query)
             
             # 发送生成开始事件
@@ -117,7 +122,7 @@ def echo():
             accumulated_text = ""
             try:
                 response = client.chat.completions.create(
-                    model='deepseek-reasoner',
+                    model='deepseek-chat',
                     messages=[{"role": "user", "content": prompt}],
                     temperature=1.3,
                     max_tokens=2000,
@@ -129,7 +134,7 @@ def echo():
                         accumulated_text += chunk.choices[0].delta.content
                         yield format_sse({"content": chunk.choices[0].delta.content}, event="chunk", id=message_id)
                         message_id += 1
-                
+
                 # 发送完成事件
                 yield format_sse({"content": accumulated_text, "status": "completed"}, event="done", id=message_id)
                 
