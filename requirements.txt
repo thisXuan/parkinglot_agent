@@ -1,0 +1,16 @@
+flask
+flask-cors
+uvicorn 
+openai
+langchain-community
+torch 
+pydantic
+numpy
+unstructured
+typing-extensions
+markdown
+html2text
+jieba
+typing
+rank_bm25
+tiktoken
