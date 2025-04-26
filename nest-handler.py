@@ -9,6 +9,7 @@ import html2text
 import json
 from collections import deque
 import time
+import requests
 
 app = Flask(__name__)
 CORS(app) 
@@ -40,11 +41,38 @@ def cleanup_expired_sessions():
         del session_last_active[session_id]
         logger.info(f"会话 {session_id} 已过期并清理")
 
+# 修改查询商铺位置的函数
+def find_store_location(store_name):
+    """通过API查询商铺在商场的哪一层"""
+    try:
+        # 发起GET请求获取商铺信息
+        url = f"http://localhost:8081/store/queryStoreInfo?query={store_name}"
+        response = requests.get(url)
+        
+        # 解析响应
+        result = response.json()
+        
+        if result.get("code") == 200 and result.get("data"):
+            # 获取第一个匹配的店铺信息
+            store = result["data"][0]
+            floor = store.get("floorNumber")
+            store_name = store.get("storeName")
+            
+            if floor is not None:
+                floor_text = f"{floor}楼"
+                return {"name": store_name, "floor": floor_text}
+        
+        # 如果请求失败或没有数据，返回None
+        return {"name": store_name, "floor": None}
+    except Exception as e:
+        logger.error(f"查询商铺位置失败: {str(e)}")
+        return {"name": store_name, "floor": None}
+
 # 构建RAG提示词
 def build_rag_prompt(query1, context_docs, history=None):
     try:
         context = "\n\n".join([doc.page_content for doc in context_docs])
-        prompt = '你是一个无比专业的重庆市源著天街商场的客服，客人询问的问题，你在上下文中的Q中进行定位，并直接返回A中的信息，不允许随意编造。'
+        prompt = '你是一个无比专业、很有礼貌的重庆市源著天街商场的客服，客人询问的问题，你在上下文信息中进行检索，不允许随意编造。'
         prompt += f"上下文信息：\n{context}\n\n"
         
         # 添加历史对话
@@ -55,7 +83,9 @@ def build_rag_prompt(query1, context_docs, history=None):
             prompt += "\n"
             
         prompt += f"问题：{query1}\n\n"
-        prompt += '请基于上述上下文信息, 返回准确无误的回答，不准包含"A："。如果无法得到答案，则返回"不好意思，我不太清楚您的问题"，不允许在答案中添加编造成分。'
+        prompt += '''请基于上述上下文信息, 返回准确的回答。如果无法得到答案，则返回"不好意思，我不太清楚您的问题"，不允许在答案中添加编造成分。
+        
+如果用户询问某个商铺在几楼，你可以调用函数查询。请注意分析问题，如果是问商铺位置，一定要调用函数而不是自己回答。'''
         return prompt
     except Exception as e:
         logger.error(f"构建提示词失败: {str(e)}")
@@ -89,7 +119,27 @@ def warmup_retriever():
 # 应用启动时预热检索器
 global_retriever = warmup_retriever()
 
-# '/api/python/demo/' 需要和Nest HTTP触发器对应
+# 定义function calling的函数工具
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "find_store_location",
+            "description": "查询商铺在商场的哪一层",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "store_name": {
+                        "type": "string",
+                        "description": "商铺名称"
+                    }
+                },
+                "required": ["store_name"]
+            }
+        }
+    }
+]
+
 @app.route('/api/workstation/agent', methods=['POST','GET'])
 def echo():
     k = 5
@@ -122,16 +172,79 @@ def echo():
         # 构建提示词，包含历史对话
         prompt = build_rag_prompt(query, context_docs, history)
         
-        # 调用模型 - 非流式处理
+        # 调用模型 - 使用function calling
         try:
             response = client.chat.completions.create(
                 model='deepseek-chat',
                 messages=[{"role": "user", "content": prompt}],
                 temperature=1.3,
-                max_tokens=2000
+                max_tokens=2000,
+                tools=tools,
+                tool_choice="auto"
             )
             
-            content = response.choices[0].message.content
+            response_message = response.choices[0].message
+            content = ""
+            
+            # 检查是否有工具调用
+            if response_message.tool_calls:
+                # 处理工具调用
+                for tool_call in response_message.tool_calls:
+                    function_name = tool_call.function.name
+                    function_args = json.loads(tool_call.function.arguments)
+                    
+                    if function_name == "find_store_location":
+                        try:
+                            store_result = find_store_location(function_args.get("store_name"))
+                            
+                            # 准备函数调用结果
+                            function_response = "没有找到该商铺信息。"
+                            if store_result["floor"]:
+                                store_name = store_result["name"]
+                                floor = store_result["floor"]
+                                function_response = f"{store_name}在{floor}。"
+                                
+                            logger.info(f"商铺查询结果: {store_result}")
+                        except Exception as e:
+                            logger.error(f"处理商铺位置查询时发生错误: {str(e)}")
+                            function_response = "查询商铺位置时发生错误，请稍后重试。"
+                        
+                        # 创建包含函数调用结果的新消息
+                        messages = [
+                            {"role": "user", "content": prompt},
+                            {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": tool_call.id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": function_name,
+                                            "arguments": tool_call.function.arguments
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": function_response
+                            }
+                        ]
+                        
+                        # 调用模型生成最终回复
+                        second_response = client.chat.completions.create(
+                            model='deepseek-chat',
+                            messages=messages,
+                            temperature=1.0,
+                            max_tokens=2000
+                        )
+                        
+                        content = second_response.choices[0].message.content
+            else:
+                # 没有工具调用，直接使用回复内容
+                content = response_message.content
 
             # 更新对话历史
             if session_id not in conversation_history:
