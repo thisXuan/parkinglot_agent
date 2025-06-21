@@ -10,7 +10,7 @@ def load_file(file):
     return documents
 
 # 对文本进行分片
-def chunk_data(data,chunk_size=500,chunk_overlap=100):
+def chunk_data(data,chunk_size,chunk_overlap):
     text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         model_name="gpt-4o",
         chunk_size=chunk_size,
@@ -20,6 +20,6 @@ def chunk_data(data,chunk_size=500,chunk_overlap=100):
     return docs
 
 if __name__ == "__main__":
-    data = load_file('extraKnowledge.txt')
+    data = load_file('auto_data.txt')
     chunks = chunk_data(data)
     print(f"将文档分割成 {len(chunks)} 个块")
