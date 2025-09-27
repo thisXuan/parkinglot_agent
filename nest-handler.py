@@ -15,7 +15,7 @@ app = Flask(__name__)
 CORS(app) 
 
 from openai import OpenAI
-client = OpenAI(api_key="sk-a1e114714f2b4580a00cdf9fcf981743", base_url="https://api.deepseek.com")
+client = OpenAI(api_key="", base_url="https://api.deepseek.com")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
