@@ -1,145 +1,108 @@
-# 商场智能客服Agent开发思路说明文档
+# RAG Agent
 
-## 一、项目目标
+A powerful Retrieval-Augmented Generation (RAG) agent built with LangChain, featuring multi-turn conversations, session management, and streaming responses.
 
-本项目旨在为重庆市源著天街商场开发一个智能客服Agent，能够自动回答顾客的常见问题、查询商铺信息、支持多轮对话，并能通过“函数调用”方式查询实时的商铺数据，提升客户服务效率。
+## Features
 
----
+- **RAG Architecture**: Combines vector search with LLM for accurate, context-aware responses
+- **Multi-turn Conversations**: Persistent session management with conversation history
+- **Tool Integration**: Extensible tool system using LangChain's agent framework
+- **Streaming Responses**: Real-time SSE (Server-Sent Events) for better UX
+- **Session Management**: Built-in session handling with Squirrel memory system
+- **MCP Server Support**: Integration with Model Context Protocol servers
 
-## 二、整体架构
+## Project Structure
 
-1. **后端服务**：基于 Flask 框架，提供 HTTP API，负责接收用户问题、处理对话、调用大模型、检索知识、返回答案。
-2. **大模型服务**：接入 DeepSeek（或 OpenAI）大模型，负责理解用户问题、生成自然语言回答，并支持 Function Calling（函数调用）。
-3. **知识检索**：通过 BM25 算法对本地知识库进行相关性检索，辅助大模型生成更准确的答案。
-4. **商铺信息API**：通过 HTTP 接口实时查询商铺详细信息（如楼层、营业时间等）。
-5. **对话管理**：支持多轮对话，能记住用户上下文，提升交互体验。
+```
+agent/
+├── rag_agent.py              # Core RAG agent implementation
+├── nest-handler.py           # Flask API server with SSE streaming
+├── llms.py                   # LLM utilities and query processing
+├── requirements.txt          # Python dependencies
+├── memory/
+│   ├── SquirrelMemory.py    # Memory management
+│   └── squirrel_session_manager.py
+├── tools/
+│   ├── tool.py              # Tool definitions
+│   └── rag/
+│       ├── embedding_oper.py # Vector store operations
+│       └── perpare_data.py   # Data preparation
+└── mcp-server/              # MCP server implementations
+    ├── catpaw.py
+    └── cursor.py
+```
 
----
+## Quick Start
 
-## 三、主要技术点
+### Installation
 
-- **Flask**：轻量级Web服务框架，负责API接口。
-- **openai/DeepSeek SDK**：调用大模型API，支持Function Calling。
-- **BM25检索**：用来从本地知识库中找出与用户问题最相关的内容。
-- **多轮对话管理**：用Python字典和队列保存每个用户的对话历史。
-- **Function Calling**：大模型可自动调用后端定义的函数（如查楼层），并将结果融合进最终回复。
-- **外部API集成**：通过HTTP请求实时获取商铺信息。
+```bash
+pip install -r requirements.txt
+```
 
----
+### Configuration
 
-## 四、数据流与处理流程
+Update API credentials in `rag_agent.py`:
 
-1. **用户提问**：用户通过前端或API发送问题（如“奈雪的茶在几楼？”）。
-2. **API接收**：Flask后端接收请求，提取问题、会话ID、历史对话。
-3. **知识检索**：用BM25算法在本地知识库中检索相关内容，作为上下文。
-4. **构建提示词**：将上下文、历史对话、用户问题拼成大模型的输入。
-5. **大模型推理**：
-   - 如果问题涉及商铺楼层等信息，模型会自动触发Function Calling，调用后端定义的查楼层函数（find_store_location），或通过HTTP接口查实时数据。
-   - 否则直接生成自然语言答案。
-6. **函数调用**：
-   - 后端收到模型的函数调用请求，调用本地函数或外部API获取数据（如楼层号）。
-   - 将结果返回给大模型，由大模型生成最终回复。
-7. **返回结果**：API将最终答案和更新后的对话历史返回给用户。
+```python
+api_key = "your_api_key"
+base_url = "your_base_url"
+```
 
----
+### Run the Server
 
-## 五、代码结构说明
+```bash
+python nest-handler.py
+```
 
-- `nest-handler.py`：主服务文件，包含API接口、对话管理、模型调用、函数调用等核心逻辑。
-- `embedding_oper.py`：知识检索相关代码，负责加载知识库、BM25检索等。
-- `prepare_data.py`：知识库数据准备与分片。
-- `extraKnowledge.txt`：本地知识库，存储常见问题及答案。
-- `requirements.txt`：项目依赖库列表。
+Server runs on `http://localhost:8000`
 
----
+### API Usage
 
-## 六、关键代码讲解
+**Chat Endpoint** (Streaming):
+```bash
+POST /api/workstation/agent
+Content-Type: application/json
 
-### 1. 对话管理
+{
+  "query": "Your question here",
+  "session_id": "optional_session_id"
+}
+```
 
-- 用`conversation_history`字典保存每个会话的历史（最多10轮）。
-- 用`session_last_active`记录会话最后活跃时间，超时自动清理。
+**Get Session History**:
+```bash
+GET /api/workstation/agent/history/<session_id>
+```
 
-### 2. 知识检索
+**Clear Session**:
+```bash
+POST /api/workstation/agent/clear/<session_id>
+```
 
-- 用BM25算法对`extraKnowledge.txt`中的内容做相关性检索，找出与用户问题最相关的几条，作为大模型的“上下文”。
+## Development
 
-### 3. 大模型调用
+### Adding New Tools
 
-- 用`openai`或`deepseek` SDK调用大模型API。
-- 构建输入时包含上下文、历史对话、当前问题。
-- 支持Function Calling：模型可自动请求后端调用特定函数。
+1. Define your tool in `tools/tool.py`
+2. Register it in the tools list
+3. The agent will automatically discover and use it
 
-### 4. Function Calling（函数调用）
+### Customizing the Prompt
 
-- 以“find_store_location”为例，模型可请求后端查找商铺楼层。
-- 后端收到请求后，调用本地函数或通过HTTP接口（如`/store/queryStoreInfo?query=xxx`）查找商铺信息。
-- 查到结果后，返回给大模型，由大模型生成最终回复。
+Modify the system prompt in `rag_agent.py` in the `_create_agent` method to adjust agent behavior.
 
-### 5. 商铺信息API集成
+### Vector Store Setup
 
-- 通过HTTP GET请求 `/store/queryStoreInfo?query=xxx` 获取商铺详细信息。
-- 解析返回的JSON，提取楼层等信息，返回给大模型。
+Prepare your knowledge base:
+```bash
+python tools/rag/perpare_data.py
+```
 
----
+## Key Dependencies
 
-## 七、常见问题与解答
-
-**Q1：如何添加新的知识？**  
-A：只需在`extraKnowledge.txt`中添加新的问答对，然后用`prepare_data.py`重新分片即可。
-
-**Q2：如何支持更多商铺？**  
-A：只需保证商铺信息API能查到新商铺，无需修改代码。
-
-**Q3：如何实现多轮对话？**  
-A：每次请求都带上`session_id`和历史对话，后端会自动维护上下文。
-
-**Q4：如何扩展函数调用？**  
-A：在后端定义新函数，并在`tools`列表中注册即可。
-
----
-
-## 八、零基础开发者如何上手
-
-1. **环境准备**  
-   - 安装Python 3.10及以上
-   - `pip install -r requirements.txt` 安装依赖
-
-2. **知识库准备**  
-   - 编辑`extraKnowledge.txt`，添加常见问答
-   - 运行`prepare_data.py`生成知识分片
-
-3. **启动服务**  
-   - 运行`python nest-handler.py`
-   - 服务默认监听5001端口
-
-4. **测试接口**  
-   - 用Postman或curl测试`/api/workstation/agent`接口
-   - 请求体示例：
-     ```json
-     {
-       "query": "奈雪的茶在几楼？",
-       "session_id": "test1",
-       "history": []
-     }
-     ```
-
-5. **集成前端**  
-   - 前端可用fetch/ajax等方式调用API，展示返回结果
-
----
-
-## 九、总结
-
-本项目通过结合大模型、知识检索、函数调用和外部API，实现了一个智能、可扩展的商场客服Agent。即使没有编程基础，也可以通过简单配置和数据维护，持续提升客服能力。
-
-如需进一步扩展功能，只需：
-- 增加知识库内容
-- 扩展函数调用
-- 对接更多外部API
-
-即可让Agent变得更强大！
-
----
-
-如有疑问，欢迎随时提问！
+- **LangChain**: Agent framework and LLM integration
+- **Flask**: Web server and API
+- **OpenAI**: LLM interface
+- **torch**: Vector operations
+- **rank_bm25**: Hybrid search capabilities
