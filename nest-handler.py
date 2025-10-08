@@ -8,6 +8,10 @@ from rag_agent import RAGAgent
 app = Flask(__name__)
 CORS(app) 
 
+
+from openai import OpenAI
+client = OpenAI(api_key="", base_url="https://api.deepseek.com")
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
