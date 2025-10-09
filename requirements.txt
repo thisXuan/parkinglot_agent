@@ -1,0 +1,23 @@
+--index-url http://pypi.sankuai.com/simple
+--trusted-host pypi.sankuai.com
+mt-squirrel-proxy==1.0.5
+python-cat==0.0.12b5
+flask
+flask-cors
+uvicorn 
+openai==1.82.0
+langchain-community==0.2.19 
+langchain-openai== 0.1.25
+langchain ==0.2.17
+torch 
+pydantic
+numpy
+unstructured
+typing-extensions
+markdown
+html2text
+jieba
+typing
+rank_bm25
+tiktoken
+urllib3<2
